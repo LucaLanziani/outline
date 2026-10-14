@@ -70,7 +70,7 @@ export class DragTarget {
       event.clientX < contentLeft - GUTTER_HIT_WIDTH ||
       event.clientX > contentRight + GUTTER_HIT_WIDTH
     ) {
-      return null;
+      return this.kanbanFromEvent(view, event);
     }
     const projectedX = Math.max(
       contentLeft,
@@ -246,6 +246,30 @@ export class DragTarget {
       }
     });
     return found;
+  }
+
+  private static kanbanFromEvent(
+    view: EditorView,
+    event: MouseEvent
+  ): DragTarget | null {
+    for (const element of view.dom.querySelectorAll<HTMLElement>(
+      ":scope > .component-container_kanban"
+    )) {
+      const board = element.querySelector<HTMLElement>(".kanban-board");
+      if (!board) {
+        continue;
+      }
+      const rect = board.getBoundingClientRect();
+      if (
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom &&
+        event.clientX >= rect.left - GUTTER_HIT_WIDTH &&
+        event.clientX <= rect.right + GUTTER_HIT_WIDTH
+      ) {
+        return this.fromElement(view, element);
+      }
+    }
+    return null;
   }
 
   private static mermaidFromEvent(

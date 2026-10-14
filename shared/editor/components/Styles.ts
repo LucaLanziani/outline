@@ -6,6 +6,7 @@ import { HEADER_HEIGHT } from "../../constants";
 import { breakpoints, hover } from "../../styles";
 import { EditorStyleHelper } from "../styles/EditorStyleHelper";
 import { videoStyle } from "./Video";
+import { kanbanStyle } from "./KanbanStyles";
 
 export type Props = {
   $rtl: boolean;
@@ -541,6 +542,7 @@ const textStyle = () => css`
 `;
 
 const style = (props: Props) => css`
+${kanbanStyle}
 --font-size-p: var(--font-size-body);
 --font-size-h1: 28px;
 --font-size-h2: 22px;

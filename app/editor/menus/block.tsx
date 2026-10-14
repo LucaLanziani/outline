@@ -138,6 +138,12 @@ export default function blockMenuItems(
       keywords: "upload attach",
     },
     {
+      name: "container_kanban",
+      title: t("Kanban board"),
+      icon: <TableIcon />,
+      keywords: "board cards columns tasks workflow",
+    },
+    {
       name: "table",
       title: t("Table"),
       icon: <TableIcon />,
