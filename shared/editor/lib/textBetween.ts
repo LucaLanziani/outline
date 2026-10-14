@@ -20,6 +20,18 @@ export default function textBetween(
   doc.nodesBetween(from, to, (node, pos) => {
     let nodeText = "";
 
+    if (
+      (node.type.name === "kanban_column" ||
+        node.type.name === "kanban_card") &&
+      from <= pos &&
+      to >= pos + node.nodeSize
+    ) {
+      nodeText += `${node.attrs.title || ""}\n`;
+      if (node.type.name === "kanban_card" && node.attrs.tags?.length) {
+        nodeText += `${node.attrs.tags.join(", ")}\n`;
+      }
+    }
+
     if (node.type.spec.leafText) {
       nodeText += node.type.spec.leafText(node);
     } else if (node.isText) {

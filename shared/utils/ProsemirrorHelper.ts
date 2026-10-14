@@ -115,7 +115,9 @@ export class ProsemirrorHelper {
       if (!node) {
         break;
       }
-      isEmpty = ProsemirrorHelper.toPlainText(node).trim() === "";
+      isEmpty =
+        node.type.name !== "container_kanban" &&
+        ProsemirrorHelper.toPlainText(node).trim() === "";
       if (isEmpty) {
         start += node.nodeSize;
       }
@@ -128,7 +130,9 @@ export class ProsemirrorHelper {
       if (!node) {
         break;
       }
-      isEmpty = ProsemirrorHelper.toPlainText(node).trim() === "";
+      isEmpty =
+        node.type.name !== "container_kanban" &&
+        ProsemirrorHelper.toPlainText(node).trim() === "";
       if (isEmpty) {
         end -= node.nodeSize;
       }
@@ -143,6 +147,15 @@ export class ProsemirrorHelper {
    * @returns True if the editor is empty
    */
   static isEmpty(doc: Node, schema?: Schema) {
+    if (
+      doc &&
+      (doc.type.name === "container_kanban" ||
+        findChildren(doc, (node) => node.type.name === "container_kanban")
+          .length > 0)
+    ) {
+      return false;
+    }
+
     if (!schema) {
       return !doc || doc.textContent.trim() === "";
     }
