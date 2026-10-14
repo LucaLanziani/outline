@@ -218,6 +218,7 @@ it.runIf(typeof document !== "undefined")(
     const view = new EditorView(element, {
       state: createEditorState(fixture(), [
         ySyncPlugin(first.getXmlFragment("prosemirror")),
+        ...new Kanban().plugins,
       ]),
     });
     const remoteElement = document.createElement("div");
@@ -225,7 +226,10 @@ it.runIf(typeof document !== "undefined")(
     const remoteView = new EditorView(remoteElement, {
       state: createEditorState(
         Node.fromJSON(schema, yDocToProsemirrorJSON(second)),
-        [ySyncPlugin(second.getXmlFragment("prosemirror"))]
+        [
+          ySyncPlugin(second.getXmlFragment("prosemirror")),
+          ...new Kanban().plugins,
+        ]
       ),
     });
     const remoteCard = findKanbanNode(
@@ -255,6 +259,19 @@ it.runIf(typeof document !== "undefined")(
     if (collapse) {
       view.dispatch(collapse);
     }
+    const focused = findKanbanNode(
+      remoteView.state.doc,
+      "card-a",
+      "kanban_card"
+    );
+    if (!focused) {
+      throw new Error("Missing focused remote card");
+    }
+    remoteView.dispatch(
+      remoteView.state.tr.setSelection(
+        TextSelection.create(remoteView.state.doc, focused.pos + 2)
+      )
+    );
     const move = moveKanbanCard(view.state, "card-a", "right");
     if (move) {
       view.dispatch(move);
@@ -263,6 +280,7 @@ it.runIf(typeof document !== "undefined")(
       Node.fromJSON(schema, yDocToProsemirrorJSON(second)).toJSON()
     ).toEqual(view.state.doc.toJSON());
     expect(remoteView.state.doc.toJSON()).toEqual(view.state.doc.toJSON());
+    expect(remoteView.state.selection).toBeInstanceOf(NodeSelection);
     expect(
       findKanbanNode(remoteView.state.doc, "card-a", "kanban_card")?.node.attrs
         .collapsed
