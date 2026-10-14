@@ -104,8 +104,16 @@ afterEach(() => {
 });
 
 it("previews the complete title, rich body and tags while dimming the source", () => {
+  source.id = "card-disclosure";
+  const body = source.querySelector(".kanban-body");
+  if (body) {
+    body.id = "body-disclosure";
+  }
   window.dispatchEvent(pointer("pointermove", 90, 90));
   const preview = document.querySelector(".kanban-preview");
+  expect(preview?.getAttribute("id")).toBeNull();
+  expect(preview?.querySelectorAll("[id]")).toHaveLength(0);
+  expect(preview instanceof HTMLElement && preview.inert).toBe(true);
   expect(preview?.textContent).toContain("Whole title");
   expect(preview?.textContent).toContain("Rich body");
   expect(preview?.textContent).toContain("Important");
@@ -176,4 +184,15 @@ it("rejects a destination outside this board", () => {
   expect(
     findKanbanNode(view.state.doc, "left", "kanban_column")?.node.childCount
   ).toBe(1);
+});
+
+it("keeps a collapsed drag preview compact without removing its stored body", () => {
+  source.querySelector("details")?.removeAttribute("open");
+  window.dispatchEvent(pointer("pointermove", 90, 90));
+  expect(
+    document.querySelector(".kanban-preview details")?.hasAttribute("open")
+  ).toBe(false);
+  expect(
+    document.querySelector(".kanban-preview .kanban-body")?.textContent
+  ).toContain("Rich body");
 });

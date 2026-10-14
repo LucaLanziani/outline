@@ -169,6 +169,11 @@ export function startKanbanDrag(
       return;
     }
     copyStyles(source, preview);
+    preview.inert = true;
+    preview.removeAttribute("id");
+    preview
+      .querySelectorAll("[id]")
+      .forEach((element) => element.removeAttribute("id"));
     preview
       .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
         "input, textarea"

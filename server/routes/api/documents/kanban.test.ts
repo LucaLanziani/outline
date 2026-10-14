@@ -4,6 +4,7 @@ import { v4 } from "uuid";
 import { EditorState } from "prosemirror-state";
 import {
   createKanbanBoard,
+  setKanbanColumnCardsCollapsed,
   findKanbanNode,
   moveKanbanCard,
   moveKanbanColumn,
@@ -66,6 +67,15 @@ it("persists, reloads, presents and exports all board fields through the documen
     throw new Error("Missing column move");
   }
   state = state.apply(reorder);
+  const collapsed = setKanbanColumnCardsCollapsed(
+    state,
+    lastColumn.attrs.id,
+    true
+  );
+  if (!collapsed) {
+    throw new Error("Missing column collapse");
+  }
+  state = state.apply(collapsed);
   const location = findKanbanNode(state.doc, cardId, "kanban_card");
   if (!location) {
     throw new Error("Missing card");
@@ -103,6 +113,9 @@ it("persists, reloads, presents and exports all board fields through the documen
     findKanbanNode(imported, cardId, "kanban_card")?.node.toJSON()
   ).toEqual(findKanbanNode(state.doc, cardId, "kanban_card")?.node.toJSON());
   const html = await DocumentHelper.toHTML(stored, { includeTitle: false });
+  expect(html).toContain('data-collapse-cards="true"');
+  expect(html).toContain('data-collapsed="true"');
+  expect(html).toContain("<details");
   expect(html).toContain("Updated API title");
   expect(html).toContain("Rich persisted body");
   expect(html).toContain("Testing");
