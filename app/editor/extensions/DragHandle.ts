@@ -180,13 +180,19 @@ export default class DragHandle extends Extension {
           };
 
           const position = (next: DragTarget) => {
-            const rect = next.element.getBoundingClientRect();
+            const board =
+              view.state.doc.nodeAt(next.pos)?.type.name === "container_kanban"
+                ? next.element.querySelector<HTMLElement>(".kanban-board")
+                : null;
+            const rect = (board ?? next.element).getBoundingClientRect();
+            const label = board?.querySelector<HTMLElement>(".kanban-label");
+            const labelRect = label?.getBoundingClientRect();
             const offsetX = GUTTER_OFFSET[next.kind];
 
-            // Center the icon on the first line of text when the block has
-            // one, or on blocks shorter than the handle, otherwise align it
-            // with the top of the block.
+            // A board's first document text is inside a card body; its label
+            // is the visible heading that the handle should align with.
             const lineMiddle =
+              (labelRect ? labelRect.top + labelRect.height / 2 : null) ??
               (next.element === view.nodeDOM(next.pos)
                 ? getFirstLineMiddle(view, next.pos, rect)
                 : null) ??
