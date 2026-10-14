@@ -1,5 +1,10 @@
-import { useState, useCallback } from "react";
-import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
+import { useState, useEffect, useCallback } from "react";
+import type {
+  ChangeEvent,
+  KeyboardEvent,
+  PointerEvent,
+  MouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { v4 } from "uuid";
 import { TextSelection } from "prosemirror-state";
@@ -28,6 +33,7 @@ import {
   MenuContent,
   MenuButton,
 } from "~/components/primitives/Menu";
+import { startKanbanDrag, animateKanbanPlacement } from "../lib/kanbanDrag";
 
 /**
  * Render the board and mount its ProseMirror column content.
@@ -173,7 +179,7 @@ export function KanbanColumn({
   });
   const dispatch = (tr: Transaction | undefined) => {
     if (tr && view.editable) {
-      view.dispatch(tr);
+      animateKanbanPlacement(view, () => view.dispatch(tr));
     }
   };
   const handleRename = (
@@ -354,7 +360,9 @@ export function KanbanCard({
   const { t } = useTranslation();
   const [tagInput, setTagInput] = useState("");
   const [editingTags, setEditingTags] = useState(false);
+  const [cleanupDrag, setCleanupDrag] = useState<(() => void) | undefined>();
   const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => () => cleanupDrag?.(), [cleanupDrag]);
   const update = useCallback(
     (field: "title" | "tags", value: string | string[]) => {
       const card = findKanbanNode(view.state.doc, node.attrs.id, "kanban_card");
@@ -406,6 +414,20 @@ export function KanbanCard({
         normalizeKanbanTags(card.node.attrs.tags).filter((item) => item !== tag)
       );
     }
+  };
+  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!view.editable || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    cleanupDrag?.();
+    const cleanup = startKanbanDrag(
+      event.nativeEvent,
+      view,
+      event.currentTarget
+    );
+    setCleanupDrag(() => cleanup);
   };
   const handleBodySelection = () => {
     if (!view.editable) {
@@ -480,7 +502,7 @@ export function KanbanCard({
   const handleMove = (columnId: string, beforeId?: string) => {
     const tr = moveKanbanCard(view.state, node.attrs.id, columnId, beforeId);
     if (tr && view.editable) {
-      view.dispatch(tr);
+      animateKanbanPlacement(view, () => view.dispatch(tr));
     }
   };
   const tags = normalizeKanbanTags(node.attrs.tags);
@@ -493,6 +515,16 @@ export function KanbanCard({
       <CardHeader contentEditable={false} onMouseDown={handleControlMouseDown}>
         {isEditable && (
           <CardActions>
+            <Grip
+              type="button"
+              aria-label={t(
+                "Drag card. Use Card actions to move with the keyboard."
+              )}
+              onPointerDown={handlePointerDown}
+              onMouseDown={handleControlMouseDown}
+            >
+              ⠿
+            </Grip>
             <Menu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
               <MenuTrigger>
                 <IconButton neutral aria-label={t("Card actions")}>
@@ -736,7 +768,7 @@ const CardHeader = styled.header`
 const CardActions = styled.div`
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 6px;
 `;
 const Tags = styled.div`
@@ -757,6 +789,25 @@ const RemoveTag = styled.button`
   cursor: pointer;
   min-width: 24px;
   min-height: 24px;
+`;
+const Grip = styled.button`
+  background: none;
+  border: none;
+  color: ${({ theme }) => theme.textSecondary};
+  cursor: grab;
+  touch-action: none;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  @media (max-width: 600px) {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  &:focus-visible {
+    outline: 2px solid ${({ theme }) => theme.accent};
+  }
 `;
 const DeletePanel = styled.div`
   border: 1px solid ${({ theme }) => theme.inputBorder};
