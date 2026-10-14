@@ -128,6 +128,12 @@ export const kanbanStyle = css`
     line-height: 1.6;
     overflow-wrap: anywhere;
   }
+  .kanban-card > details > summary {
+    cursor: pointer;
+    .kanban-title {
+      display: inline;
+    }
+  }
   .kanban-title {
     display: block;
     font-weight: 600;

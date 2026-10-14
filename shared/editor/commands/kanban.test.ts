@@ -1,5 +1,6 @@
 import { Node, DOMSerializer, DOMParser } from "prosemirror-model";
-import { TextSelection } from "prosemirror-state";
+import { history, undo, redo } from "prosemirror-history";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import * as Y from "yjs";
 import {
   prosemirrorToYDoc,
@@ -18,6 +19,9 @@ import textBetween from "../lib/textBetween";
 import { KanbanCardNode, Kanban } from "../nodes/Kanban";
 import {
   createKanbanBoard,
+  createKanbanCard,
+  setKanbanCardCollapsed,
+  setKanbanColumnCardsCollapsed,
   findKanbanNode,
   moveKanbanCard,
   moveKanbanColumn,
@@ -214,6 +218,7 @@ it.runIf(typeof document !== "undefined")(
     const view = new EditorView(element, {
       state: createEditorState(fixture(), [
         ySyncPlugin(first.getXmlFragment("prosemirror")),
+        ...new Kanban().plugins,
       ]),
     });
     const remoteElement = document.createElement("div");
@@ -221,7 +226,10 @@ it.runIf(typeof document !== "undefined")(
     const remoteView = new EditorView(remoteElement, {
       state: createEditorState(
         Node.fromJSON(schema, yDocToProsemirrorJSON(second)),
-        [ySyncPlugin(second.getXmlFragment("prosemirror"))]
+        [
+          ySyncPlugin(second.getXmlFragment("prosemirror")),
+          ...new Kanban().plugins,
+        ]
       ),
     });
     const remoteCard = findKanbanNode(
@@ -247,6 +255,23 @@ it.runIf(typeof document !== "undefined")(
         .setNodeAttribute(card.pos, "title", "Synced title")
         .setNodeAttribute(card.pos, "tags", ["Synced"])
     );
+    const collapse = setKanbanColumnCardsCollapsed(view.state, "right", true);
+    if (collapse) {
+      view.dispatch(collapse);
+    }
+    const focused = findKanbanNode(
+      remoteView.state.doc,
+      "card-a",
+      "kanban_card"
+    );
+    if (!focused) {
+      throw new Error("Missing focused remote card");
+    }
+    remoteView.dispatch(
+      remoteView.state.tr.setSelection(
+        TextSelection.create(remoteView.state.doc, focused.pos + 2)
+      )
+    );
     const move = moveKanbanCard(view.state, "card-a", "right");
     if (move) {
       view.dispatch(move);
@@ -254,6 +279,16 @@ it.runIf(typeof document !== "undefined")(
     expect(
       Node.fromJSON(schema, yDocToProsemirrorJSON(second)).toJSON()
     ).toEqual(view.state.doc.toJSON());
+    expect(remoteView.state.doc.toJSON()).toEqual(view.state.doc.toJSON());
+    expect(remoteView.state.selection).toBeInstanceOf(NodeSelection);
+    expect(
+      findKanbanNode(remoteView.state.doc, "card-a", "kanban_card")?.node.attrs
+        .collapsed
+    ).toBe(true);
+    const expand = setKanbanCardCollapsed(remoteView.state, "card-a", false);
+    if (expand) {
+      remoteView.dispatch(expand);
+    }
     expect(remoteView.state.doc.toJSON()).toEqual(view.state.doc.toJSON());
     const saved = Y.encodeStateAsUpdate(second);
     const reloaded = new Y.Doc();
@@ -333,4 +368,206 @@ it("treats an empty board as content for autosave and preserves it when trimming
   expect(ProsemirrorHelper.trim(doc).firstChild?.type.name).toBe(
     "container_kanban"
   );
+});
+
+it("defaults legacy cards and every default column to expanded", () => {
+  const board = createKanbanBoard(schema);
+  board.forEach((column) => {
+    expect(column.attrs.collapseCards).toBe(false);
+    expect(createKanbanCard(column).attrs.collapsed).toBe(false);
+  });
+  expect(fixture().child(1).firstChild?.firstChild?.attrs.collapsed).toBe(
+    false
+  );
+});
+
+it("collapses a column in one undoable operation and allows individual changes", () => {
+  let state = createEditorState(fixture(), [history()]);
+  const original = state.doc;
+  const tr = setKanbanColumnCardsCollapsed(state, "left", true);
+  if (!tr) {
+    throw new Error("Missing column");
+  }
+  state = state.apply(tr);
+  expect(
+    findKanbanNode(state.doc, "left", "kanban_column")?.node.attrs.collapseCards
+  ).toBe(true);
+  expect(
+    findKanbanNode(state.doc, "card-a", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  expect(
+    findKanbanNode(state.doc, "card-b", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  expect(
+    undo(state, (change) => {
+      state = state.apply(change);
+    })
+  ).toBe(true);
+  expect(state.doc.eq(original)).toBe(true);
+  expect(
+    redo(state, (change) => {
+      state = state.apply(change);
+    })
+  ).toBe(true);
+  const expand = setKanbanCardCollapsed(state, "card-a", false);
+  if (expand) {
+    state = state.apply(expand);
+  }
+  expect(
+    findKanbanNode(state.doc, "card-a", "kanban_card")?.node.attrs.collapsed
+  ).toBe(false);
+  expect(
+    findKanbanNode(state.doc, "left", "kanban_column")?.node.attrs.collapseCards
+  ).toBe(true);
+  expect(
+    findKanbanNode(state.doc, "card-b", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  const expandColumn = setKanbanColumnCardsCollapsed(state, "left", false);
+  if (expandColumn) {
+    state = state.apply(expandColumn);
+  }
+  expect(state.doc.eq(original)).toBe(true);
+  expect(setKanbanCardCollapsed(state, "missing", true)).toBeUndefined();
+  expect(setKanbanColumnCardsCollapsed(state, "missing", true)).toBeUndefined();
+});
+
+it("applies destination settings on moves and preserves manual choices on reorders", () => {
+  let state = createEditorState(fixture());
+  const original = findKanbanNode(state.doc, "card-a", "kanban_card")?.node;
+  const collapse = setKanbanColumnCardsCollapsed(state, "right", true);
+  if (collapse) {
+    state = state.apply(collapse);
+  }
+  const right = findKanbanNode(state.doc, "right", "kanban_column");
+  if (!right) {
+    throw new Error("Missing destination");
+  }
+  expect(createKanbanCard(right.node).attrs.collapsed).toBe(true);
+  for (const id of ["card-a", "card-b"]) {
+    const move = moveKanbanCard(state, id, "right");
+    if (move) {
+      state = state.apply(move);
+    }
+  }
+  expect(
+    findKanbanNode(state.doc, "card-a", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  const expand = setKanbanCardCollapsed(state, "card-b", false);
+  if (expand) {
+    state = state.apply(expand);
+  }
+  const reorder = moveKanbanCard(state, "card-b", "right", "card-a");
+  if (reorder) {
+    state = state.apply(reorder);
+  }
+  expect(
+    findKanbanNode(state.doc, "card-b", "kanban_card")?.node.attrs.collapsed
+  ).toBe(false);
+  const moveBack = moveKanbanCard(state, "card-a", "left");
+  if (moveBack) {
+    state = state.apply(moveBack);
+  }
+  expect(
+    findKanbanNode(state.doc, "card-a", "kanban_card")?.node.eq(
+      original ?? schema.nodes.paragraph.create()
+    )
+  ).toBe(true);
+});
+
+it("applies a destination's collapse setting when transferring a deleted column", () => {
+  let state = createEditorState(fixture());
+  const tr = setKanbanColumnCardsCollapsed(state, "right", true);
+  if (tr) {
+    state = state.apply(tr);
+  }
+  const removal = deleteKanbanColumn(state, "left", "right");
+  if (!removal) {
+    throw new Error("Missing transfer");
+  }
+  expect(
+    findKanbanNode(removal.doc, "card-a", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  expect(
+    findKanbanNode(removal.doc, "card-b", "kanban_card")?.node.attrs.collapsed
+  ).toBe(true);
+  expect(removal.doc.textContent).toContain("Existing rich body");
+});
+
+it("round-trips collapse flags through JSON and Markdown without dropping hidden content", () => {
+  const state = createEditorState(fixture());
+  const tr = setKanbanColumnCardsCollapsed(state, "left", true);
+  if (!tr) {
+    throw new Error("Missing collapse");
+  }
+  expect(Node.fromJSON(schema, tr.doc.toJSON()).eq(tr.doc)).toBe(true);
+  const markdown = serializer.serialize(tr.doc);
+  expect(markdown).toContain("Existing rich body");
+  expect(markdown).toContain("Design");
+  expect(parser.parse(markdown).toJSON()).toEqual(tr.doc.toJSON());
+  const invalid = parser.parse(
+    markdown
+      .replace(/"collapsed":true/g, '"collapsed":"true"')
+      .replace(/"collapseCards":true/g, '"collapseCards":1')
+  );
+  expect(
+    findKanbanNode(invalid, "card-a", "kanban_card")?.node.attrs.collapsed
+  ).toBe(false);
+  expect(
+    findKanbanNode(invalid, "left", "kanban_column")?.node.attrs.collapseCards
+  ).toBe(false);
+});
+
+it.runIf(typeof document !== "undefined")(
+  "exports native disclosures with complete hidden content and round-trips their flags",
+  () => {
+    const tr = setKanbanColumnCardsCollapsed(
+      createEditorState(fixture()),
+      "left",
+      true
+    );
+    if (!tr) {
+      throw new Error("Missing collapse");
+    }
+    const element = document.createElement("div");
+    element.append(
+      DOMSerializer.fromSchema(schema).serializeFragment(tr.doc.content)
+    );
+    const details = element.querySelector("details");
+    expect(details?.hasAttribute("open")).toBe(false);
+    expect(element.querySelector("summary")?.textContent).toBe(
+      "Independent title"
+    );
+    expect(element.querySelector(".kanban-body strong")?.textContent).toBe(
+      "Existing rich body"
+    );
+    expect(element.textContent).toContain("Urgent");
+    expect(DOMParser.fromSchema(schema).parse(element).toJSON()).toEqual(
+      tr.doc.toJSON()
+    );
+  }
+);
+
+it("keeps a focused body selection on its card when a move collapses it", () => {
+  let state = createEditorState(fixture(), new Kanban().plugins);
+  const preference = setKanbanColumnCardsCollapsed(state, "right", true);
+  if (preference) {
+    state = state.applyTransaction(preference).state;
+  }
+  const card = findKanbanNode(state.doc, "card-a", "kanban_card");
+  if (!card) {
+    throw new Error("Missing card");
+  }
+  state = state.apply(
+    state.tr.setSelection(TextSelection.create(state.doc, card.pos + 2))
+  );
+  const move = moveKanbanCard(state, "card-a", "right");
+  if (!move) {
+    throw new Error("Missing move");
+  }
+  state = state.applyTransaction(move).state;
+  expect(state.selection).toBeInstanceOf(NodeSelection);
+  expect(state.selection.from).toBe(
+    findKanbanNode(state.doc, "card-a", "kanban_card")?.pos
+  );
+  expect(state.doc.textContent).toContain("Existing rich body");
 });

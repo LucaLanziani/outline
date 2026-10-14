@@ -1,10 +1,15 @@
 import type Token from "markdown-it/lib/token.mjs";
+import { t } from "i18next";
 import type { NodeSpec, Node as ProsemirrorNode } from "prosemirror-model";
-import { TextSelection, Plugin } from "prosemirror-state";
+import { NodeSelection, TextSelection, Plugin } from "prosemirror-state";
 import type { Command, Transaction } from "prosemirror-state";
 import type { CommandFactory } from "../lib/Extension";
 import { v4 } from "uuid";
-import { createKanbanBoard, normalizeKanbanTags } from "../commands/kanban";
+import {
+  createKanbanBoard,
+  findKanbanNode,
+  normalizeKanbanTags,
+} from "../commands/kanban";
 import type { MarkdownSerializerState } from "../lib/markdown/serializer";
 import { kanbanRule } from "../rules/kanban";
 import Node from "./Node";
@@ -59,10 +64,35 @@ export class Kanban extends Node {
     };
     return [
       new Plugin({
-        appendTransaction: (transactions, _oldState, state) =>
-          transactions.some((tr) => tr.docChanged)
-            ? repair(state.doc, state.tr)
-            : null,
+        appendTransaction: (transactions, oldState, state) => {
+          if (!transactions.some((tr) => tr.docChanged)) {
+            return null;
+          }
+          const tr = repair(state.doc, state.tr) ?? state.tr;
+          const { $from } = oldState.selection;
+          for (let depth = $from.depth; depth > 0; depth--) {
+            const previous = $from.node(depth);
+            if (previous.type.name !== "kanban_card") {
+              continue;
+            }
+            const card = findKanbanNode(
+              tr.doc,
+              previous.attrs.id,
+              "kanban_card"
+            );
+
+            // A moved body selection would otherwise map into a different
+            // card while the original card's details are being hidden.
+            if (
+              card?.node.attrs.collapsed === true &&
+              previous.attrs.collapsed !== true
+            ) {
+              tr.setSelection(NodeSelection.create(tr.doc, card.pos));
+            }
+            break;
+          }
+          return tr.steps.length || tr.selectionSet ? tr : null;
+        },
         view: (view) => {
           const timer = setTimeout(() => {
             if (!view.editable || view.isDestroyed) {
@@ -132,7 +162,11 @@ export class KanbanColumnNode extends Node {
     return {
       content: "kanban_card*",
       isolating: true,
-      attrs: { id: { default: null }, title: { default: "" } },
+      attrs: {
+        id: { default: null },
+        title: { default: "" },
+        collapseCards: { default: false },
+      },
       parseDOM: [
         {
           tag: "section[data-kanban-column]",
@@ -140,6 +174,7 @@ export class KanbanColumnNode extends Node {
           getAttrs: (dom) => ({
             id: dom.getAttribute("data-id"),
             title: dom.getAttribute("data-title") ?? "",
+            collapseCards: dom.getAttribute("data-collapse-cards") === "true",
           }),
         },
       ],
@@ -149,6 +184,7 @@ export class KanbanColumnNode extends Node {
           "data-kanban-column": "",
           "data-id": node.attrs.id,
           "data-title": node.attrs.title,
+          "data-collapse-cards": String(node.attrs.collapseCards === true),
           class: "kanban-column",
         },
         [
@@ -197,6 +233,7 @@ export class KanbanCardNode extends Node {
         id: { default: null },
         title: { default: "" },
         tags: { default: [] },
+        collapsed: { default: false },
       },
       parseDOM: [
         {
@@ -206,6 +243,7 @@ export class KanbanCardNode extends Node {
             id: dom.getAttribute("data-id"),
             title: dom.getAttribute("data-title") ?? "",
             tags: parseTags(dom.getAttribute("data-tags")),
+            collapsed: dom.getAttribute("data-collapsed") === "true",
           }),
         },
       ],
@@ -216,18 +254,31 @@ export class KanbanCardNode extends Node {
           "data-id": node.attrs.id,
           "data-title": node.attrs.title,
           "data-tags": JSON.stringify(node.attrs.tags),
+          "data-collapsed": String(node.attrs.collapsed === true),
           class: "kanban-card",
         },
-        ["strong", { class: "kanban-title" }, node.attrs.title],
-        ["div", { class: "kanban-body" }, 0],
         [
-          "div",
-          { class: "kanban-tags" },
-          ...normalizeKanbanTags(node.attrs.tags).map((tag) => [
-            "span",
+          "details",
+          { open: node.attrs.collapsed === true ? null : "" },
+          [
+            "summary",
             {},
-            tag,
-          ]),
+            [
+              "strong",
+              { class: "kanban-title" },
+              node.attrs.title || t("Untitled card"),
+            ],
+          ],
+          ["div", { class: "kanban-body" }, 0],
+          [
+            "div",
+            { class: "kanban-tags" },
+            ...normalizeKanbanTags(node.attrs.tags).map((tag) => [
+              "span",
+              {},
+              tag,
+            ]),
+          ],
         ],
       ],
     };
@@ -317,11 +368,18 @@ function writeContainer(
 function readMetadata(token: Token) {
   const start = token.info.indexOf("{");
   try {
-    const metadata: { id?: string; title?: string; tags?: string[] } =
-      JSON.parse(token.info.slice(start));
+    const metadata: {
+      id?: string;
+      title?: string;
+      tags?: string[];
+      collapseCards?: boolean;
+      collapsed?: boolean;
+    } = JSON.parse(token.info.slice(start));
     return {
       id: typeof metadata.id === "string" ? metadata.id : v4(),
       title: typeof metadata.title === "string" ? metadata.title : "",
+      collapseCards: metadata.collapseCards === true,
+      collapsed: metadata.collapsed === true,
       tags:
         Array.isArray(metadata.tags) &&
         metadata.tags.every((tag) => typeof tag === "string")

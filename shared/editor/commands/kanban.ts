@@ -49,6 +49,67 @@ export function createKanbanBoard(schema: Schema): Node {
 }
 
 /**
+ * Create a card using its column's collapse setting.
+ *
+ * @param column the current destination column.
+ * @return a card with an empty rich-text body and a new identity.
+ */
+export function createKanbanCard(column: Node): Node {
+  const { schema } = column.type;
+  return schema.nodes.kanban_card.create(
+    { id: v4(), collapsed: column.attrs.collapseCards === true },
+    schema.nodes.paragraph.create()
+  );
+}
+
+/**
+ * Set a card's saved collapse state without changing its content.
+ *
+ * @param state the latest editor state.
+ * @param cardId the card identity.
+ * @param collapsed whether to hide the body and tags.
+ * @return an undoable transaction, or undefined for a missing card.
+ */
+export function setKanbanCardCollapsed(
+  state: EditorState,
+  cardId: string,
+  collapsed: boolean
+): Transaction | undefined {
+  const card = findKanbanNode(state.doc, cardId, "kanban_card");
+  return card
+    ? state.tr.setNodeAttribute(card.pos, "collapsed", collapsed)
+    : undefined;
+}
+
+/**
+ * Set a column's collapse preference and update all its current cards.
+ *
+ * @param state the latest editor state.
+ * @param columnId the column identity.
+ * @param collapseCards whether current and incoming cards should collapse.
+ * @return one undoable transaction, or undefined for a missing column.
+ */
+export function setKanbanColumnCardsCollapsed(
+  state: EditorState,
+  columnId: string,
+  collapseCards: boolean
+): Transaction | undefined {
+  const column = findKanbanNode(state.doc, columnId, "kanban_column");
+  if (!column) {
+    return undefined;
+  }
+  const tr = state.tr.setNodeAttribute(
+    column.pos,
+    "collapseCards",
+    collapseCards
+  );
+  column.node.forEach((_card, offset) => {
+    tr.setNodeAttribute(column.pos + 1 + offset, "collapsed", collapseCards);
+  });
+  return tr;
+}
+
+/**
  * Find a current node by identity, including after collaborative edits.
  *
  * @param doc the current document.
@@ -108,7 +169,11 @@ export function moveKanbanCard(
   }
   const destination = before?.pos ?? column.pos + column.node.nodeSize - 1;
   const tr = state.tr.delete(card.pos, card.pos + card.node.nodeSize);
-  return tr.insert(tr.mapping.map(destination, -1), card.node);
+  const moving = state.doc.resolve(card.pos).parent !== column.node;
+  return tr.insert(
+    tr.mapping.map(destination, -1),
+    moving ? cardWithColumnCollapse(card.node, column.node) : card.node
+  );
 }
 
 /**
@@ -175,8 +240,18 @@ export function deleteKanbanColumn(
   if (column.node.childCount && destination) {
     tr.insert(
       tr.mapping.map(destination.pos + destination.node.nodeSize - 1, -1),
-      column.node.content
+      Array.from({ length: column.node.childCount }, (_, index) =>
+        cardWithColumnCollapse(column.node.child(index), destination.node)
+      )
     );
   }
   return tr;
+}
+
+function cardWithColumnCollapse(card: Node, column: Node): Node {
+  return card.type.create(
+    { ...card.attrs, collapsed: column.attrs.collapseCards === true },
+    card.content,
+    card.marks
+  );
 }

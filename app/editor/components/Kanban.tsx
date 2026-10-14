@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+} from "react";
 import type {
   ChangeEvent,
   KeyboardEvent,
@@ -7,13 +13,23 @@ import type {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { v4 } from "uuid";
-import { TextSelection } from "prosemirror-state";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import type { Transaction } from "prosemirror-state";
 import styled from "styled-components";
-import { MoreIcon, PlusIcon, TableIcon, TrashIcon } from "outline-icons";
+import {
+  CollapseIcon,
+  DisclosureIcon,
+  MoreIcon,
+  PlusIcon,
+  TableIcon,
+  TrashIcon,
+} from "outline-icons";
 import { ArrowLeftIcon, ArrowRightIcon } from "~/components/Icons/ArrowIcon";
 import type { ComponentProps } from "@shared/editor/types";
 import {
+  createKanbanCard,
+  setKanbanCardCollapsed,
+  setKanbanColumnCardsCollapsed,
   deleteKanbanColumn,
   moveKanbanColumn,
   moveKanbanCard,
@@ -198,11 +214,21 @@ export function KanbanColumn({
       return;
     }
     const at = column.pos + column.node.nodeSize - 1;
-    const card = view.state.schema.nodes.kanban_card.create(
-      { id: v4() },
-      view.state.schema.nodes.paragraph.create()
-    );
+    const card = createKanbanCard(column.node);
     const tr = view.state.tr.insert(at, card);
+    if (card.attrs.collapsed === true) {
+      view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, at)));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          view.dom
+            .querySelector<HTMLTextAreaElement>(
+              `[data-kanban-card][data-id="${card.attrs.id}"] textarea`
+            )
+            ?.focus();
+        })
+      );
+      return;
+    }
     view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(at + 2))));
     view.focus();
   };
@@ -239,6 +265,22 @@ export function KanbanColumn({
           </CardCount>
           {isEditable && (
             <ColumnActions>
+              <IconButton
+                neutral
+                aria-label={t("Collapse cards")}
+                aria-pressed={node.attrs.collapseCards === true}
+                onClick={() =>
+                  dispatch(
+                    setKanbanColumnCardsCollapsed(
+                      view.state,
+                      node.attrs.id,
+                      node.attrs.collapseCards !== true
+                    )
+                  )
+                }
+              >
+                <CollapseIcon size={16} />
+              </IconButton>
               <IconButton
                 neutral
                 aria-label={t("Move column left")}
@@ -362,6 +404,15 @@ export function KanbanCard({
   const [editingTags, setEditingTags] = useState(false);
   const [cleanupDrag, setCleanupDrag] = useState<(() => void) | undefined>();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [localCollapsed, setLocalCollapsed] = useState<boolean | undefined>();
+  const detailsRef = useRef<HTMLDivElement>(null);
+  const disclosureRef = useRef<HTMLButtonElement>(null);
+  const savedCollapsed = node.attrs.collapsed === true;
+  const collapsed = isEditable
+    ? savedCollapsed
+    : (localCollapsed ?? savedCollapsed);
+  const detailsId = `kanban-card-details-${node.attrs.id}`;
+  useEffect(() => setLocalCollapsed(undefined), [isEditable, savedCollapsed]);
   useEffect(() => () => cleanupDrag?.(), [cleanupDrag]);
   const update = useCallback(
     (field: "title" | "tags", value: string | string[]) => {
@@ -375,13 +426,68 @@ export function KanbanCard({
   const handleTitle = (
     event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => update("title", event.target.value);
-  const handleTagCommit = (value: string) => {
-    const card = findKanbanNode(view.state.doc, node.attrs.id, "kanban_card");
-    if (card) {
-      update(
-        "tags",
-        normalizeKanbanTags([...card.node.attrs.tags, ...value.split(",")])
-      );
+  const handleTagCommit = useCallback(
+    (value: string) => {
+      if (!value.trim()) {
+        return;
+      }
+      const card = findKanbanNode(view.state.doc, node.attrs.id, "kanban_card");
+      if (card) {
+        update(
+          "tags",
+          normalizeKanbanTags([...card.node.attrs.tags, ...value.split(",")])
+        );
+      }
+    },
+    [view, node.attrs.id, update]
+  );
+  useLayoutEffect(() => {
+    if (!collapsed) {
+      return;
+    }
+    const details = detailsRef.current;
+    const document = view.dom.ownerDocument;
+    const active = document.activeElement;
+    const anchor = document.getSelection()?.anchorNode;
+    let editingBody = false;
+    if (active === view.dom) {
+      const { selection } = view.state;
+      editingBody =
+        selection instanceof NodeSelection &&
+        selection.node.attrs.id === node.attrs.id;
+      const { $from } = view.state.selection;
+      for (let depth = $from.depth; depth > 0; depth--) {
+        const parent = $from.node(depth);
+        if (
+          parent.type.name === "kanban_card" &&
+          parent.attrs.id === node.attrs.id
+        ) {
+          editingBody = true;
+          break;
+        }
+      }
+    }
+    if (editingTags) {
+      handleTagCommit(tagInput);
+      setTagInput("");
+      setEditingTags(false);
+    }
+    if (
+      (active && details?.contains(active)) ||
+      editingBody ||
+      (active === view.dom && anchor && details?.contains(anchor))
+    ) {
+      disclosureRef.current?.focus();
+    }
+  }, [collapsed, editingTags, tagInput, handleTagCommit, view, node.attrs.id]);
+  const handleCollapse = () => {
+    if (!isEditable) {
+      animateKanbanPlacement(view, () => setLocalCollapsed(!collapsed));
+      return;
+    }
+    const tr = setKanbanCardCollapsed(view.state, node.attrs.id, !collapsed);
+    if (tr && view.editable) {
+      animateKanbanPlacement(view, () => view.dispatch(tr));
     }
   };
   const handleTagInput = (
@@ -511,10 +617,11 @@ export function KanbanCard({
       className="kanban-card"
       data-kanban-card=""
       data-id={node.attrs.id}
+      data-collapsed={String(collapsed)}
     >
       <CardHeader contentEditable={false} onMouseDown={handleControlMouseDown}>
-        {isEditable && (
-          <CardActions>
+        <CardActions>
+          {isEditable && (
             <Grip
               type="button"
               aria-label={t(
@@ -525,61 +632,86 @@ export function KanbanCard({
             >
               ⠿
             </Grip>
-            <Menu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-              <MenuTrigger>
-                <IconButton neutral aria-label={t("Card actions")}>
-                  <MoreIcon size={16} />
-                </IconButton>
-              </MenuTrigger>
-              <MenuContent
-                onCloseAutoFocus={(event) => {
-                  if (editingTags) {
-                    event.preventDefault();
-                  }
-                }}
-              >
-                <MenuButton
-                  label={t("Move card up")}
-                  disabled={index === 0}
-                  onClick={() =>
-                    handleMove(
-                      column?.attrs.id,
-                      column?.maybeChild(index - 1)?.attrs.id
-                    )
-                  }
-                />
-                <MenuButton
-                  label={t("Move card down")}
-                  disabled={!column || index === column.childCount - 1}
-                  onClick={() =>
-                    handleMove(
-                      column?.attrs.id,
-                      column?.maybeChild(index + 2)?.attrs.id
-                    )
-                  }
-                />
-                {columns
-                  .filter((item) => item.id !== column?.attrs.id)
-                  .map((item) => (
-                    <MenuButton
-                      key={item.id}
-                      label={t("Move to {{column}}", { column: item.title })}
-                      onClick={() => handleMove(item.id)}
-                    />
-                  ))}
-                <MenuButton
-                  label={t("Edit tags")}
-                  onClick={() => setEditingTags(true)}
-                />
-                <MenuButton
-                  label={t("Delete card")}
-                  dangerous
-                  onClick={handleDelete}
-                />
-              </MenuContent>
-            </Menu>
-          </CardActions>
-        )}
+          )}
+          <CardActionButtons>
+            <DisclosureButton
+              ref={disclosureRef}
+              neutral
+              $collapsed={collapsed}
+              aria-label={collapsed ? t("Expand card") : t("Collapse card")}
+              aria-expanded={!collapsed}
+              aria-controls={detailsId}
+              onClick={handleCollapse}
+            >
+              <DisclosureIcon size={16} />
+            </DisclosureButton>
+            {isEditable && (
+              <Menu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+                <MenuTrigger>
+                  <IconButton neutral aria-label={t("Card actions")}>
+                    <MoreIcon size={16} />
+                  </IconButton>
+                </MenuTrigger>
+                <MenuContent
+                  onCloseAutoFocus={(event) => {
+                    if (editingTags) {
+                      event.preventDefault();
+                    }
+                  }}
+                >
+                  <MenuButton
+                    label={t("Move card up")}
+                    disabled={index === 0}
+                    onClick={() =>
+                      handleMove(
+                        column?.attrs.id,
+                        column?.maybeChild(index - 1)?.attrs.id
+                      )
+                    }
+                  />
+                  <MenuButton
+                    label={t("Move card down")}
+                    disabled={!column || index === column.childCount - 1}
+                    onClick={() =>
+                      handleMove(
+                        column?.attrs.id,
+                        column?.maybeChild(index + 2)?.attrs.id
+                      )
+                    }
+                  />
+                  {columns
+                    .filter((item) => item.id !== column?.attrs.id)
+                    .map((item) => (
+                      <MenuButton
+                        key={item.id}
+                        label={t("Move to {{column}}", { column: item.title })}
+                        onClick={() => handleMove(item.id)}
+                      />
+                    ))}
+                  <MenuButton
+                    label={t("Edit tags")}
+                    onClick={() => {
+                      const tr = setKanbanCardCollapsed(
+                        view.state,
+                        node.attrs.id,
+                        false
+                      );
+                      if (tr && view.editable) {
+                        view.dispatch(tr);
+                        setEditingTags(true);
+                      }
+                    }}
+                  />
+                  <MenuButton
+                    label={t("Delete card")}
+                    dangerous
+                    onClick={handleDelete}
+                  />
+                </MenuContent>
+              </Menu>
+            )}
+          </CardActionButtons>
+        </CardActions>
         {isEditable ? (
           <TitleInput
             type="textarea"
@@ -597,47 +729,52 @@ export function KanbanCard({
           </strong>
         )}
       </CardHeader>
-      <div
-        className="kanban-body"
-        onMouseUp={handleBodySelection}
-        onKeyDownCapture={handleBodySelection}
-        aria-label={t("Card body")}
-        ref={contentRef}
-      />
-      <Tags contentEditable={false} onMouseDown={handleControlMouseDown}>
-        {tags.map((tag) => (
-          <Badge primary key={tag}>
-            {tag}
-            {isEditable && (
-              <RemoveTag
-                type="button"
-                aria-label={t("Remove tag {{tag}}", { tag })}
-                onClick={() => handleRemoveTag(tag)}
-              >
-                ×
-              </RemoveTag>
-            )}
-          </Badge>
-        ))}
-      </Tags>
-      {isEditable && editingTags && (
-        <Controls contentEditable={false} onMouseDown={handleControlMouseDown}>
-          <TagInput
-            autoFocus
-            aria-label={t("Add tags")}
-            placeholder={t("Add tags with Enter or comma")}
-            value={tagInput}
-            onChange={handleTagInput}
-            onKeyDown={handleTagKey}
-            onBlur={() => {
-              handleTagCommit(tagInput);
-              setTagInput("");
-              setEditingTags(false);
-            }}
-            margin={0}
-          />
-        </Controls>
-      )}
+      <div id={detailsId} ref={detailsRef} hidden={collapsed}>
+        <div
+          className="kanban-body"
+          onMouseUp={handleBodySelection}
+          onKeyDownCapture={handleBodySelection}
+          aria-label={t("Card body")}
+          ref={contentRef}
+        />
+        <Tags contentEditable={false} onMouseDown={handleControlMouseDown}>
+          {tags.map((tag) => (
+            <Badge primary key={tag}>
+              {tag}
+              {isEditable && (
+                <RemoveTag
+                  type="button"
+                  aria-label={t("Remove tag {{tag}}", { tag })}
+                  onClick={() => handleRemoveTag(tag)}
+                >
+                  ×
+                </RemoveTag>
+              )}
+            </Badge>
+          ))}
+        </Tags>
+        {isEditable && editingTags && (
+          <Controls
+            contentEditable={false}
+            onMouseDown={handleControlMouseDown}
+          >
+            <TagInput
+              autoFocus
+              aria-label={t("Add tags")}
+              placeholder={t("Add tags with Enter or comma")}
+              value={tagInput}
+              onChange={handleTagInput}
+              onKeyDown={handleTagKey}
+              onBlur={() => {
+                handleTagCommit(tagInput);
+                setTagInput("");
+                setEditingTags(false);
+              }}
+              margin={0}
+            />
+          </Controls>
+        )}
+      </div>
     </article>
   );
 }
@@ -691,7 +828,8 @@ const IconButton = styled(Button)<{ $destructive?: boolean }>`
     justify-content: center;
   }
   &:hover:not(:disabled),
-  &[aria-expanded="true"] {
+  &[aria-expanded="true"],
+  &[aria-pressed="true"] {
     background: ${({ theme }) => theme.backgroundSecondary};
     box-shadow: none;
   }
@@ -708,6 +846,17 @@ const IconButton = styled(Button)<{ $destructive?: boolean }>`
     height: 32px;
     min-width: 32px;
   }
+`;
+const DisclosureButton = styled(IconButton)<{ $collapsed: boolean }>`
+  svg {
+    transform: ${({ $collapsed }) => ($collapsed ? "rotate(-90deg)" : "none")};
+  }
+`;
+const CardActionButtons = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
 `;
 const AddButton = styled(Button)`
   color: ${({ theme }) => theme.accent};
