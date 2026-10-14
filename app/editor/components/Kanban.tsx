@@ -5,7 +5,7 @@ import { v4 } from "uuid";
 import { TextSelection } from "prosemirror-state";
 import type { Transaction } from "prosemirror-state";
 import styled from "styled-components";
-import { MoreIcon, PlusIcon, TrashIcon } from "outline-icons";
+import { MoreIcon, PlusIcon, TableIcon, TrashIcon } from "outline-icons";
 import { ArrowLeftIcon, ArrowRightIcon } from "~/components/Icons/ArrowIcon";
 import type { ComponentProps } from "@shared/editor/types";
 import {
@@ -43,6 +43,21 @@ export function KanbanBoard({
   isEditable,
 }: ComponentProps) {
   const { t } = useTranslation();
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = () => {
+    const board = findKanbanNode(
+      view.state.doc,
+      node.attrs.id,
+      "container_kanban"
+    );
+    if (!view.editable || !board) {
+      return;
+    }
+    view.dispatch(
+      view.state.tr.delete(board.pos, board.pos + board.node.nodeSize)
+    );
+    view.focus();
+  };
   const handleAddColumn = () => {
     const pos = getPos();
     const board = pos === undefined ? undefined : view.state.doc.nodeAt(pos);
@@ -66,6 +81,55 @@ export function KanbanBoard({
       data-id={node.attrs.id}
       aria-label={t("Kanban board")}
     >
+      <header
+        className="kanban-header"
+        contentEditable={false}
+        onMouseDown={handleControlMouseDown}
+      >
+        <span className="kanban-label">
+          <TableIcon size={20} aria-hidden="true" />
+          {t("Kanban")}
+        </span>
+        {isEditable && (
+          <BoardActions>
+            <AddButton
+              neutral
+              icon={<PlusIcon size={16} />}
+              onClick={handleAddColumn}
+            >
+              {t("Add column")}
+            </AddButton>
+            <IconButton
+              neutral
+              $destructive
+              aria-label={t("Delete board")}
+              onClick={() => setDeleting(true)}
+            >
+              <TrashIcon size={16} />
+            </IconButton>
+          </BoardActions>
+        )}
+      </header>
+      {isEditable && deleting && (
+        <DeletePanel
+          contentEditable={false}
+          onMouseDown={handleControlMouseDown}
+          role="group"
+          aria-label={t("Delete board")}
+        >
+          <p>
+            {t("This will delete this board and all of its columns and cards.")}
+          </p>
+          <Controls>
+            <Button neutral autoFocus onClick={() => setDeleting(false)}>
+              {t("Cancel")}
+            </Button>
+            <Button danger onClick={handleDelete}>
+              {t("Delete board")}
+            </Button>
+          </Controls>
+        </DeletePanel>
+      )}
       <div
         className="kanban-scroll"
         tabIndex={0}
@@ -74,13 +138,6 @@ export function KanbanBoard({
       >
         <div className="kanban-columns" ref={contentRef} />
       </div>
-      {isEditable && (
-        <Controls contentEditable={false} onMouseDown={handleControlMouseDown}>
-          <Button neutral onClick={handleAddColumn}>
-            {t("Add column")}
-          </Button>
-        </Controls>
-      )}
     </section>
   );
 }
@@ -562,6 +619,12 @@ const Controls = styled.div`
   gap: 8px;
   padding: 8px 0;
   flex-wrap: wrap;
+`;
+const BoardActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 `;
 const ColumnHeader = styled.header`
   display: flex;

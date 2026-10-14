@@ -15,7 +15,28 @@ export const kanbanStyle = css`
         2 + var(--full-width-transform-offset, 0px)
     );
     margin-block: 24px;
+    border: 1px solid ${({ theme }) => theme.inputBorder};
+    border-radius: 8px;
+    padding: 8px;
+    background: ${({ theme }) => theme.background};
     box-sizing: border-box;
+  }
+  .kanban-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .kanban-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.6;
   }
   .kanban-scroll {
     overflow-x: auto;
