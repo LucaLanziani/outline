@@ -66,6 +66,7 @@ import { PortalContext } from "~/components/Portal";
 import type { Properties } from "~/types";
 import Logger from "~/utils/Logger";
 import ComponentView from "./components/ComponentView";
+import { KanbanBoard, KanbanColumn, KanbanCard } from "./components/Kanban";
 import EditorContext from "./components/EditorContext";
 import { NodeViewRenderer } from "./components/NodeViewRenderer";
 import type { PortalRenderer } from "./components/NodeViewRenderer";
@@ -77,6 +78,15 @@ import { LightboxImageFactory } from "@shared/editor/lib/Lightbox";
 import Lightbox from "~/components/Lightbox";
 import { anchorPlugin } from "@shared/editor/plugins/AnchorPlugin";
 import { toastNotice } from "./toastNotice";
+
+const kanbanComponents: Record<
+  string,
+  React.FunctionComponent<ComponentProps>
+> = {
+  container_kanban: KanbanBoard,
+  kanban_column: KanbanColumn,
+  kanban_card: KanbanCard,
+};
 
 export type Props = {
   /** An optional identifier for the editor context. It is used to persist local settings */
@@ -451,7 +461,10 @@ export class Editor extends React.PureComponent<
   private createNodeViews(): { [name: string]: NodeViewConstructor } {
     return Object.fromEntries(
       this.extensions.extensions
-        .filter((extension: ReactNode) => extension.component)
+        .filter(
+          (extension: ReactNode) =>
+            extension.component || kanbanComponents[extension.name]
+        )
         .map((extension: ReactNode) => [
           extension.name,
           (
@@ -460,14 +473,17 @@ export class Editor extends React.PureComponent<
             getPos: () => number | undefined,
             decorations: Decoration[]
           ) =>
-            new ComponentView(extension.component, {
-              editor: this,
-              extension,
-              node,
-              view,
-              getPos,
-              decorations,
-            }),
+            new ComponentView(
+              kanbanComponents[extension.name] ?? extension.component,
+              {
+                editor: this,
+                extension,
+                node,
+                view,
+                getPos,
+                decorations,
+              }
+            ),
         ])
     ) as { [name: string]: NodeViewConstructor };
   }
