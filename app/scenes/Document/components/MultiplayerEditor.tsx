@@ -17,6 +17,7 @@ import * as Y from "yjs";
 import { EditorUpdateError } from "@shared/collaboration/CloseEvents";
 import History from "@shared/editor/extensions/History";
 import EDITOR_VERSION from "@shared/editor/version";
+import { ProsemirrorHelper } from "@shared/utils/ProsemirrorHelper";
 import { ProsemirrorDataHelper } from "@shared/utils/ProsemirrorDataHelper";
 import { supportsPassiveListener } from "@shared/utils/browser";
 import type { Props as EditorProps } from "~/components/Editor";
@@ -403,7 +404,7 @@ function hasContent(value: Props["defaultValue"]): boolean {
   }
 
   if (value instanceof ProsemirrorNode) {
-    return !!value.textContent.trim();
+    return !ProsemirrorHelper.isEmpty(value);
   }
 
   return !ProsemirrorDataHelper.isEmpty(value);

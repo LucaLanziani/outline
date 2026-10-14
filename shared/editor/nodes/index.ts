@@ -31,6 +31,7 @@ import Heading from "./Heading";
 import HorizontalRule from "./HorizontalRule";
 import Image from "./Image";
 import ListItem from "./ListItem";
+import { Kanban, KanbanColumnNode, KanbanCardNode } from "./Kanban";
 import Math from "./Math";
 import MathBlock from "./MathBlock";
 import Mention from "./Mention";
@@ -127,6 +128,9 @@ export const richExtensions: Nodes = [
   MathBlock,
   Mention,
   ToggleBlock,
+  KanbanCardNode,
+  KanbanColumnNode,
+  Kanban,
   // Container type nodes should be last so that key handlers are registered for content inside
   // the container nodes first.
   ...listExtensions,
